@@ -49,23 +49,118 @@ public class TACGenerator {
 
     private int handleAssignment(List<Token> tokens, int i, StringBuilder code) {
         if (i - 1 < 0 || i + 1 >= tokens.size() || !tokens.get(i - 1).getType().equals("IDENTIFIER")) {
+            code.append("Error: Invalid assignment at token ").append(i).append("\n");
             return i + 1;
         }
         String left = tokens.get(i - 1).getValue();
-        if (i + 3 < tokens.size() && tokens.get(i + 2).getType().equals("OPERATOR") && "+-*/".contains(tokens.get(i + 2).getValue())) {
-            String op1 = tokens.get(i + 1).getValue();
-            String op = tokens.get(i + 2).getValue();
-            String op2 = tokens.get(i + 3).getValue();
-            String temp = newTemp();
-            code.append(temp).append(" = ").append(op1).append(" ").append(op).append(" ").append(op2).append("\n");
-            code.append(left).append(" = ").append(temp).append("\n");
-            return i + 4;
-        } else if (tokens.get(i + 1).getType().matches("IDENTIFIER|NUMBER")) {
-            String right = tokens.get(i + 1).getValue();
-            code.append(left).append(" = ").append(right).append("\n");
-            return i + 2;
+        List<String> expression = new ArrayList<>();
+        int j = i + 1;
+        while (j < tokens.size() && !tokens.get(j).getValue().equals(";")) {
+            expression.add(tokens.get(j).getValue());
+            j++;
         }
-        return i + 1;
+        if (expression.isEmpty()) {
+            code.append("Error: Empty expression in assignment at token ").append(i).append("\n");
+            return j;
+        }
+        List<String> postfix = toPostfix(expression);
+        if (postfix.isEmpty()) {
+            code.append("Error: Invalid expression in assignment at token ").append(i).append("\n");
+            return j;
+        }
+        String result = evaluatePostfix(postfix, code);
+        if (result != null) {
+            code.append(left).append(" = ").append(result).append("\n");
+        }
+        return j + 1;
+    }
+
+    private List<String> toPostfix(List<String> expression) {
+        List<String> postfix = new ArrayList<>();
+        Deque<String> stack = new ArrayDeque<>();
+        Map<String, Integer> precedence = new HashMap<>();
+        precedence.put("+", 1);
+        precedence.put("-", 1);
+        precedence.put("*", 2);
+        precedence.put("/", 2);
+
+        for (String token : expression) {
+            if (token.matches("[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+(\\.[0-9]+)?")) {
+                postfix.add(token);
+            } else if (precedence.containsKey(token)) {
+                while (!stack.isEmpty() && precedence.getOrDefault(stack.peek(), 0) >= precedence.get(token)) {
+                    postfix.add(stack.pop());
+                }
+                stack.push(token);
+            } else if (token.equals("(")) {
+                stack.push(token);
+            } else if (token.equals(")")) {
+                while (!stack.isEmpty() && !stack.peek().equals("(")) {
+                    postfix.add(stack.pop());
+                }
+                if (!stack.isEmpty() && stack.peek().equals("(")) {
+                    stack.pop();
+                } else {
+                    return new ArrayList<>(); // Mismatched parentheses
+                }
+            }
+        }
+        while (!stack.isEmpty()) {
+            String op = stack.pop();
+            if (op.equals("(") || op.equals(")")) {
+                return new ArrayList<>(); // Mismatched parentheses
+            }
+            postfix.add(op);
+        }
+        return postfix;
+    }
+
+    private String evaluatePostfix(List<String> postfix, StringBuilder code) {
+        Deque<String> stack = new ArrayDeque<>();
+        for (String token : postfix) {
+            if (token.matches("[a-zA-Z_][a-zA-Z0-9_]*|[0-9]+(\\.[0-9]+)?")) {
+                stack.push(token);
+            } else if ("+-*/".contains(token)) {
+                if (stack.size() < 2) {
+                    code.append("Error: Invalid expression, insufficient operands for ").append(token).append("\n");
+                    return null;
+                }
+                String op2 = stack.pop();
+                String op1 = stack.pop();
+                if (op1.matches("[0-9]+(\\.[0-9]+)?") && op2.matches("[0-9]+(\\.[0-9]+)?")) {
+                    try {
+                        double num1 = Double.parseDouble(op1);
+                        double num2 = Double.parseDouble(op2);
+                        double result = switch (token) {
+                            case "+" -> num1 + num2;
+                            case "-" -> num1 - num2;
+                            case "*" -> num1 * num2;
+                            case "/" -> {
+                                if (num2 == 0) {
+                                    code.append("Error: Division by zero\n");
+                                    yield 0;
+                                }
+                                yield num1 / num2;
+                            }
+                            default -> 0.0;
+                        };
+                        stack.push(String.valueOf(result));
+                    } catch (NumberFormatException e) {
+                        code.append("Error: Invalid number format in expression\n");
+                        return null;
+                    }
+                } else {
+                    String temp = newTemp();
+                    code.append(temp).append(" = ").append(op1).append(" ").append(token).append(" ").append(op2).append("\n");
+                    stack.push(temp);
+                }
+            }
+        }
+        if (stack.size() != 1) {
+            code.append("Error: Invalid expression structure\n");
+            return null;
+        }
+        return stack.pop();
     }
 
     private int handleForLoop(List<Token> tokens, int i, StringBuilder code) {
@@ -224,26 +319,9 @@ public class TACGenerator {
         if (type.equals("KEYWORD") && value.matches("int|float|double|char|boolean")) {
             i++;
             if (i < tokens.size() && tokens.get(i).getType().equals("IDENTIFIER")) {
-                String varName = tokens.get(i).getValue();
                 i++;
                 if (i < tokens.size() && tokens.get(i).getValue().equals("=")) {
-                    i++;
-                    if (i + 2 < tokens.size() && tokens.get(i + 1).getType().equals("OPERATOR") && "+-*/".contains(tokens.get(i + 1).getValue())) {
-                        String op1 = tokens.get(i).getValue();
-                        String op = tokens.get(i + 1).getValue();
-                        String op2 = tokens.get(i + 2).getValue();
-                        String temp = newTemp();
-                        code.append(temp).append(" = ").append(op1).append(" ").append(op).append(" ").append(op2).append("\n");
-                        code.append(varName).append(" = ").append(temp).append("\n");
-                        i += 3;
-                    } else if (i < tokens.size() && tokens.get(i).getType().matches("IDENTIFIER|NUMBER")) {
-                        code.append(varName).append(" = ").append(tokens.get(i).getValue()).append("\n");
-                        i++;
-                    } else {
-                        i++;
-                    }
-                } else {
-                    i++;
+                    return handleAssignment(tokens, i, code);
                 }
             }
         } else if (type.equals("IDENTIFIER") && i + 1 < tokens.size() && tokens.get(i + 1).getValue().equals("=")) {
